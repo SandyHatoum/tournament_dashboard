@@ -1,5 +1,6 @@
 ---
 title: "NCAA Tournament Dashboard"
+output-dir: docs
 output: 
   flexdashboard::flex_dashboard:
     orientation: columns
