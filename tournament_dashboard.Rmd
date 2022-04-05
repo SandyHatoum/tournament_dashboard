@@ -1,0 +1,361 @@
+---
+title: "NCAA Tournament Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    theme:
+      version: 4
+      bg: "#FFFEFF"
+      fg: "#007AC0" 
+      primary: "#007AC0"
+      navbar-bg: "#182C4D"
+      base_font: 
+        google: Prompt
+      heading_font:
+        google: Sen
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(shinyWidgets)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(janitor)
+library(lubridate)
+library(extrafont)
+library(viridis)
+library(here)
+library(ggtext)
+library(extrafont)
+library(showtext)
+library(scalesextra)
+library(scales)
+library(plotly)
+
+```
+```{r}
+font_add_google("Prompt", "sans-serif")
+font_add_google("Gochi Hand", "gochi")
+font_add_google("Alegreya Sans", "aleg")
+```
+
+
+```{r global, include=FALSE}
+
+#read in clean csv
+tournaments <- read.csv("data/tournament.csv")
+
+
+#cleaning tournament percentages
+tournaments <- tournaments %>%
+        mutate(
+          full_w = reg_w + tourney_w,
+          full_l = reg_l + tourney_l,
+          full_percent = round((full_w / (full_w + full_l)) * 100, digits = 1)
+        )
+
+#re-code the tournament finishes
+tournaments <- tournaments%>%
+  # relabel the tournament finishes as readable
+  mutate(tourney_finish = case_when(
+    tourney_finish == "Champ" ~ "Champion",
+    tourney_finish == "N2nd" ~ "Runner-Up",
+    tourney_finish == "NSF" ~ "Final Four",
+    tourney_finish == "RF" ~ "Elite Eight",
+    tourney_finish == "RSF" ~ "Sweet Sixteen",
+    tourney_finish == "2nd" ~ "2nd Round",
+    tourney_finish == "1st" ~ "1st Round",
+    tourney_finish == "OR" ~ "1st Round",
+    TRUE ~ "other"
+  ),
+  #make a variable for whether the team made the final four that tournament
+  final_four = case_when(
+    tourney_finish == "Champion" | tourney_finish == "Runner-Up" | tourney_finish == "Final Four" ~ 1,
+    TRUE ~ 0
+  ))
+
+#factor the final four variable and label
+tournaments<- tournaments%>%
+  mutate(final_four = factor(final_four,
+                             levels = c(0,1),
+                             labels = c("Eliminated",
+                                        "Made Final Four")))
+
+#group by team and count number of appearances in championship games
+championship_games <- tournaments %>%
+  group_by(school) %>%
+  mutate(
+    total_champ_games = case_when(
+      tourney_finish == "Champion" | tourney_finish == "Runner-Up" ~ 1,
+      TRUE ~ 0
+    )
+  )%>%
+  group_by(school) %>%
+  summarise(total_champ_games = sum(total_champ_games)) %>%
+  filter(total_champ_games >= 1) %>%
+  arrange(desc(total_champ_games))
+
+#top five schools by number of times they have appeared in a championship game
+top_five <- championship_games %>%
+  top_n(5)
+
+text_adj <- 0.3
+#group by team and count wins
+most_champions <- tournaments %>%
+  count(tourney_finish, school, sort = T)%>%
+  filter(tourney_finish == "Champion")%>%
+  slice(1:7)%>%
+   mutate(label_pos = case_when(
+                  school == "UConn" ~ 7 + text_adj,
+                  school == "Tennessee" ~ 6 + text_adj,
+                  school == "Stanford" ~ 5 + text_adj,
+                  school == "Southern California" ~ 4 + text_adj,
+                  school == "Notre Dame" ~ 3 + text_adj,
+                  school == "Louisiana Tech" ~ 2 + text_adj,
+                  school == "Baylor" ~ 1 + text_adj,
+                ))
+
+#find the last year they won a championship
+champ_year <- tournaments %>%
+  filter(tourney_finish == "Champion") %>%
+  select(school, year)%>%
+  group_by(school)%>%
+  filter(year == max(year))
+
+champions <- left_join(most_champions, champ_year, by = "school")%>%
+  mutate(school = fct_reorder(school, n))
+```
+
+Championships
+=====================================
+
+Column {data-width:850}
+-----------------------------------------------------------------------
+
+### Who has won the most championships?
+UConn and Tennessee dominate aggregate stats on championship wins, but Tennessee hasn't won since 2008.   
+
+```{r}
+#output: bar plot of top 7 teams with most championships
+ renderPlot({
+  ggplot(champions, aes(x = n, y = school))+
+  geom_col(aes(fill = school, width = 0.6))+
+  theme_classic()+
+  xlab("Tournament Year")+
+  ylab("")+
+  scale_fill_manual(
+    values = c(
+      "UConn" = "#0E1A3E",
+      "Notre Dame" = "#217E51",
+      "Tennessee" = "#FF7D00",
+      "Stanford" = "#9A0D20",
+      "Louisiana Tech" = "#003087",
+      "Baylor" = "#154734",
+      "Southern California" = "#990000"
+    ))+
+  theme(
+    legend.position="none",
+    # #panel.background = element_rect(fill = "#E6D5B8"),
+    plot.margin = margin(20, 20, 20, 100), 
+    axis.text.y = element_text(size = 15), 
+    axis.text.x=element_blank(),
+    axis.ticks.x=element_blank())+
+    geom_text(data = champions, 
+            aes(y = label_pos - 0.3, 
+                x = n - 0.5, 
+                label = n), 
+                size = 4,
+                colour = "white")+
+    geom_text(data = champions, 
+              aes(y = label_pos - 0.75, 
+                  x = 1, 
+                  label = glue::glue("Last win: {year}")),
+              size = 4)
+  # labs(title = "UConn and Tennessee Dominate Championship Wins",
+       # subtitle = "But Tennessee hasn't won since 2008")
+        
+      })
+
+```
+
+
+Final Four
+=====================================
+Inputs {.sidebar}
+-------------------------------------------------------------------------------------------
+
+```{r inputs-1}
+  # input as school
+  checkboxGroupInput("school", 
+              label = "", 
+              choices = c("UConn", 
+                         "Tennessee", 
+                         "Louisiana Tech", 
+                         "Notre Dame",
+                         "Stanford"),
+              selected = "UConn")
+
+```
+
+Column {data-width=850}
+-----------------------------------------------------------------------
+
+### How often did the top 5 perfomring schools make it into the final four (1982-2018)?
+Top 5 is defined by number of appearances in a championship game. But even in these programs, many teams go years without making it to a final four round of the tournament. 
+
+```{r}
+#output the plot
+ renderPlot({
+   t5_tourneys<- tournaments %>%
+      filter(school %in% input$school)
+  
+  
+ tournaments %>%
+  filter(school %in% input$school)%>%
+  ggplot(aes(x = year, y = final_four, group = school))+
+  facet_grid(school ~., switch = "y") +
+  geom_line(aes(color = school))+
+  geom_point(size = 1.5, 
+              aes(color = school), 
+              alpha = 0.8) +
+  geom_point(size = 3, 
+              color = ifelse(t5_tourneys$tourney_finish == "Champion", "#F1D00A", NA),
+              shape = 9,
+              fill = NA)+
+    theme_classic()+
+    xlab(label = "Tournament Year")+
+    ylab("")+
+    theme(plot.margin = margin(20, 20, 60, 20),
+          axis.text.y = element_text(size = 12),
+          axis.title.y=element_text(size = 20),
+          axis.text.x= element_text(size = 16),
+          axis.title.x=element_text(size = 20, vjust = -0.4),
+          axis.ticks = element_blank(),
+          legend.title = element_blank(), 
+          legend.text = element_text(size = 15),
+          legend.position = "none",
+          strip.text.y = element_text(size = 10, face = "bold", color = "#0E1A3E"),
+          plot.caption = element_text(size = 12, face = "italic")
+          )+
+    scale_color_manual(
+                values = c(
+                "UConn" = "#0E1A3E",
+                "Notre Dame" = "#217E51",
+                "Tennessee" = "#FF7D00",
+                "Stanford" = "#9A0D20",
+                "Louisiana Tech" = "#003087"
+                      ))+
+   labs(caption = "Yellow stars denote championship wins.", 
+        size = 10)
+ 
+      })
+
+```
+
+
+Triangle Rivalry
+=====================================
+Inputs {.sidebar}
+-------------------------------------------------------------------------------------------
+
+```{r inputs-2}
+  # change year range
+  sliderInput("slider", 
+              label = "Season Year Range", 
+              min = 1982, 
+              max = 2018, 
+              value = c(1982, 2018), 
+              ticks = FALSE,
+              sep = NULL)
+
+```
+
+Column {data-width=850}
+---------------------------------------------------------------------------------------
+
+### How do the win rates of North Carolina schools compare to each other?
+Win percentages for every year the NC schools have been in the tournament plus their average win rates as dashed horizontal lines. Duke outperforms rival UNC on full season win rate, despite never having won a tournament (UNC has won once). 
+
+```{r}
+#north carolina schools only 
+nc_teams <- tournaments%>%
+  filter(school == "NC State"| school == "Duke"| school == "North Carolina")
+
+win_avgs <- nc_teams%>%
+  group_by(school)%>%
+  mutate(avg_win_pct = mean(full_percent))%>%
+  distinct(avg_win_pct)
+
+ renderPlot({
+  
+  nc_teams %>%
+    filter(year >= input$slider[1] & year <= input$slider[2])%>%
+    ggplot(aes(x = year, y = full_percent, colour = school))+
+    geom_line()+
+    geom_point()+
+    stat_smooth(aes(colour = school), method="lm", formula=y~1, se=FALSE, linetype="dashed")+
+    theme_classic()+
+    theme(plot.margin = margin(20, 20, 100, 20),
+          axis.text.y = element_text(size = 12),
+          axis.title.y=element_text(size = 14, vjust = 1),
+          axis.text.x= element_text(size = 16),
+          axis.title.x=element_text(size = 18, vjust= -0.1, hjust = 1),
+          axis.ticks = element_blank(),
+          legend.title = element_blank(), 
+          legend.text = element_text(size = 15))+
+    scale_y_continuous(labels = label_percent(accuracy = 1, scale = 1))+
+    scale_color_manual(values = c("#00009c", "#CC0000", "#7BAFD4"))+
+    xlab("Tournament Year")+
+    ylab("Win Rate for the Full Season")
+        
+      })
+ 
+```
+
+Duke
+=====================================
+
+Column {data-width=850}
+-----------------------------------------------------------------------
+
+### How does Duke's win rate compare the rest of the league?
+The horizontal line represents the average win rate across the whole league from 1982-2018. Duke has spent more time above it than below. 
+
+```{r}
+#north carolina schools only 
+duke <- tournaments%>%
+  filter(school == "Duke")
+
+league_avg <- tournaments%>%
+  mutate(avg_win_all = mean(full_percent))%>%
+  distinct(avg_win_all)
+
+ renderPlot({
+  
+  duke %>%
+    ggplot(aes(x = year, y = full_percent))+
+    geom_hline(aes(yintercept = league_avg$avg_win_all[1]))+
+    geom_ribbon(aes(ymin=pmin(pmax(full_percent),league_avg$avg_win_all[1]), ymax=league_avg$avg_win_all[1]), fill="#CC0000") +
+    geom_ribbon(aes(ymin=league_avg$avg_win_all[1], ymax=pmax(pmin(full_percent),league_avg$avg_win_all[1])), fill="#00009c")+
+    theme_classic()+
+    theme(plot.margin = margin(20, 20, 60, 20),
+          axis.text.y = element_text(size = 12),
+          axis.title.y=element_text(size = 14, vjust = 1),
+          axis.text.x= element_text(size = 16),
+          axis.title.x=element_text(size = 18, vjust= -0.1, hjust = 0.95),
+          axis.ticks = element_blank(),
+          legend.title = element_blank(), 
+          legend.text = element_text(size = 15))+
+    scale_y_continuous(labels = label_percent(accuracy = 1, scale = 1))+
+    scale_color_manual(values = c("#00009c", "#CC0000", "#7BAFD4"))+
+    xlab("Tournament Year")+
+    ylab("Win Rate for the Full Season")+
+    guides(colour=guide_legend(""))
+        
+      })
+
+```
